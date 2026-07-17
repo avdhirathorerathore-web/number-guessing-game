@@ -1,0 +1,148 @@
+import cv2
+from ultralytics import YOLO
+from fpdf import FPDF
+import tkinter as tk
+import os
+
+# -------------------- LOAD MODEL --------------------
+model = YOLO("yolov8m.pt")
+
+# -------------------- PRICE SYSTEM --------------------
+prices = {
+    "bottle": 10,
+    "cup": 5,
+    "can": 15,
+    "book": 8,        # paper
+    "cell phone": 2   # pen
+}
+
+detected_items = []
+total_money = 0
+terminate_flag = False
+object_detected_once = False
+
+# -------------------- BUTTON FUNCTIONS --------------------
+def add_more():
+    global terminate_flag, object_detected_once
+    terminate_flag = False
+    object_detected_once = False
+    print("➡️ Add More pressed, ready for next detection...")
+
+def terminate():
+    global terminate_flag
+    terminate_flag = True
+    print("🛑 Terminate pressed, detection stopped.")
+    btn_pdf.pack(pady=10, anchor="e")   # Show PDF button now
+
+def show_pdf():
+    global total_money, detected_items
+    print("📄 Generating PDF Report...")
+
+    # Desktop path
+    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", "report.pdf")
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', size=16)
+    pdf.cell(200, 10, txt="Reverse Vending Machine Report", ln=True, align="C")
+    pdf.ln(10)
+
+    # Total
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt=f"Total Money: Rs {total_money}", ln=True, align="L")
+    pdf.ln(10)
+
+    # Table Header
+    pdf.set_font("Arial", 'B', size=12)
+    pdf.cell(100, 10, "Item", 1, 0, 'C')
+    pdf.cell(50, 10, "Price", 1, 1, 'C')
+
+    # Table Rows
+    pdf.set_font("Arial", size=12)
+    for item in detected_items:
+        price = None
+        for k, v in prices.items():
+            if item == "paper" and k == "book":
+                price = v
+            elif item == "pen" and k == "cell phone":
+                price = v
+            elif item == k:
+                price = v
+        pdf.cell(100, 10, item, 1, 0, 'C')
+        pdf.cell(50, 10, f"Rs {price}", 1, 1, 'C')
+
+    pdf.output(desktop_path)
+    print(f"✅ Report saved on Desktop as report.pdf")
+    root.destroy()   # Close Tkinter window after PDF
+
+# -------------------- TKINTER WINDOW --------------------
+root = tk.Tk()
+root.title("Options")
+
+# Right-hand side buttons with colors
+btn_add = tk.Button(root, text="Add More", command=add_more,
+                    width=20, height=2, bg="lightgreen", fg="black")
+btn_add.pack(pady=10, anchor="e")
+
+btn_terminate = tk.Button(root, text="Terminate", command=terminate,
+                          width=20, height=2, bg="tomato", fg="white")
+btn_terminate.pack(pady=10, anchor="e")
+
+btn_pdf = tk.Button(root, text="Show PDF", command=show_pdf,
+                    width=20, height=2, bg="skyblue", fg="black")
+btn_pdf.pack_forget()   # Hidden initially
+
+# -------------------- CAMERA --------------------
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    frame = cv2.convertScaleAbs(frame, alpha=1.0, beta=5)
+
+    if not terminate_flag and not object_detected_once:  # Detect only once per cycle
+        results = model(frame, conf=0.5, imgsz=640)
+
+        for r in results:
+            for box in r.boxes:
+                cls = int(box.cls[0])
+                label = model.names[cls]
+
+                if label in prices:
+                    if label == "book":
+                        display_label = "paper"
+                    elif label == "cell phone":
+                        display_label = "pen"
+                    else:
+                        display_label = label
+
+                    detected_items.append(display_label)
+                    total_money += prices[label]
+                    object_detected_once = True
+                    print(f"✔️ {display_label} added → Rs {prices[label]}")
+
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 3)
+                    text = f"{display_label.upper()} Rs{prices[label]}"
+                    cv2.putText(frame, text, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    # -------------------- UI PANEL --------------------
+    cv2.rectangle(frame, (0, 0), (400, 120), (30, 30, 30), -1)
+    cv2.putText(frame, "REVERSE VENDING", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    cv2.putText(frame, f"Total: Rs {total_money}", (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
+
+    cv2.imshow("Smart Reverse Vending Machine", frame)
+
+    if cv2.waitKey(1) & 0xFF == 27:  # ESC
+        break
+
+    root.update()
+
+cap.release()
+cv2.destroyAllWindows()
